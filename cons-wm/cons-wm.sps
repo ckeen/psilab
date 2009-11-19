@@ -11,7 +11,7 @@
 ;; 	(psilab xlib util x-query-tree)
 ;; 	(psilab xlib util x-fetch-name))
 (import foreign)
-(use xlib lookup-table srfi-9 srfi-4 lolevel)
+(use xlib lookup-table srfi-1 srfi-9 srfi-4 lolevel)
 
 ;; intermediate glue
 
@@ -30,9 +30,8 @@
 		 (border-width unsigned-int32)
 		 (depth        unsigned-int32))
 
-    (xgetgeometry dpy id (location root) (location x) (location y) (location width) (location height) (location border-width) (location depth))
-
-    (make-x-get-geometry-info root x y width height border-width depth)))
+                (xgetgeometry dpy id (location root) (location x) (location y) (location width) (location height) (location border-width) (location depth))
+                (make-x-get-geometry-info root x y width height border-width depth)))
 
 (define x-fetch-name
   (let-location ((window-name c-string*))
@@ -43,22 +42,22 @@
 	    name)))))
 
 
-  (define-record x-query-tree-info root parent children)
+(define-record x-query-tree-info root parent children)
 
-  (define (x-query-tree dpy id)
+(define (x-query-tree dpy id)
 
-    (let-location ((root      unsigned-int32)
-                   (parent    unsigned-int32)
-                   (children  (c-pointer u32vector))
-                   (nchildren unsigned-int32))
+  (let-location ((root      unsigned-int32)
+                 (parent    unsigned-int32)
+                 (children  (c-pointer u32vector))
+                 (nchildren unsigned-int32))
 
-      (xquerytree dpy id (location root) (location parent) (location children) (location nchildren))
+                (xquerytree dpy id (location root) (location parent) (location children) (location nchildren))
 
-      (let ((kids (u32vector nchildren))
-            (memcpy (foreign-lambda bool "C_memcpy" u32vector c-pointer integer)))
-        (memcpy kids children (* nchildren 4))
-        (printf "Got ~A children! -> ~A" nchildren (vector->list kids))
-        (make-x-query-tree-info root parent (u32vector->list kids)))))
+                (let ((kids (make-blob (* 4 nchildren)))
+                      (memcpy (foreign-lambda bool "C_memcpy" blob c-pointer integer)))
+                  (memcpy kids children (* nchildren 4))
+                  (xfree children)
+                  (make-x-query-tree-info root parent (u32vector->list (blob->u32vector kids))))))
 
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -174,13 +173,14 @@
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define (key-press ev)
-  (let ((keysym (xkeycodetokeysym dpy (xkeyevent-keycode ev) 0)))
+  (let ((keysym (xkeycodetokeysym dpy (xkeyevent-keycode ev) 0))) ; index is 1 for shifted keys (as XK_P) 0 for lower case keys (XK_LCP)
     (let ((key (find (lambda (k)
 		       (and (= (key-keysym k) keysym)
 			    (= (clean-mask (key-mod k))
 			       (clean-mask (xkeyevent-state ev)))))
 		     keys)))
-      ((key-procedure key)))))
+      (printf "Key code ~A pressed event ~A (P should be ~A) list  ~A keyevent-state ~A -> found ~a~%" (xkeyevent-keycode ev) keysym XK_P (map (lambda(k) `(,(key-keysym k) ,(clean-mask (key-mod k)))) keys) (clean-mask (xkeyevent-state ev)) key)
+      (when key ((key-procedure key))))))
 
 (vector-set! handlers KEYPRESS key-press)
 
@@ -344,7 +344,7 @@
 (define desktops-hidden (make-vector 10 '()))
 
 (define (hide-mouse)
-  (xunmapwindow dpy selected)
+  (when selected (xunmapwindow dpy selected))
   (vector-set! desktops-hidden
 	       current-desktop
 	       (cons selected (vector-ref desktops-hidden current-desktop)))
@@ -375,14 +375,12 @@
 	(vector-ref desktops-hidden current-desktop)))))))
 
 (define (dmenu-hidden)
-  (guard (var
-	  (else (printf "  dmenu-hidden : ~A~%" var)))
-    (call-with-process-ports
-     (process "dmenu" "-b"
-	      "-nb" menu-background-color
-	      "-sb" selected-menu-background-color
-	      "-nf" menu-foreground-color
-	      "-sf" selected-menu-foreground-color)
+     (call-with-process-ports
+     (process (sprintf "dmenu_run -b -nb '~A' -sb '~A' -nf '~A' -sf '~A' &"
+                      menu-background-color
+                      selected-menu-background-color
+                      menu-foreground-color
+                      selected-menu-foreground-color))
      (lambda (in out err)
        (let ((tbl (filter cdr
 			  (map
@@ -400,7 +398,7 @@
 	 (let ((result (read out)))
 	   (if (integer? result)
 	       (unhide (car (list-ref tbl result)))
-	       (update-dzen))))))))
+	       (update-dzen)))))))
 
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -651,22 +649,21 @@
 		 (xmovewindow dpy client 0 18))))))))
 
 (define (dmenu-run)
-  (system (fmt #f
-	       "dmenu_run -b"
-	       " -nb '" menu-background-color "'"
-	       " -sb '" selected-menu-background-color "'"
-	       " -nf '" menu-foreground-color "'"
-	       " -sf '" selected-menu-foreground-color "'"
-	       " &")))
+  (system (sprintf "dmenu_run -b -nb '~A' -sb '~A' -nf '~A' -sf '~A' &"
+                   menu-background-color
+                   selected-menu-background-color
+                   menu-foreground-color
+                   selected-menu-foreground-color)))
+
 
 (set! keys
       (list (make-key mod-key XK_RETURN (lambda () (system "xterm &")))
 	    (make-key mod-key XK_TAB    next-client)
-	    (make-key mod-key XK_P      dmenu-run)
-	    (make-key mod-key XK_U      dmenu-unmapped)
-	    (make-key mod-key XK_H      dmenu-hidden)
+	    (make-key mod-key XK_LCP      dmenu-run)
+	    (make-key mod-key XK_LCU      dmenu-unmapped)
+	    (make-key mod-key XK_LCH      dmenu-hidden)
 	    (make-key mod-key XK_F9     maximize)
-	    (make-key mod-key XK_Q      exit)
+	    (make-key mod-key XK_LCQ      exit)
 	    (make-key mod-key XK_1 (lambda () (switch-to-desktop 0)))
 	    (make-key mod-key XK_2 (lambda () (switch-to-desktop 1)))
 	    (make-key mod-key XK_3 (lambda () (switch-to-desktop 2)))
@@ -710,6 +707,10 @@
                                     LEAVEWINDOWMASK
                                     STRUCTURENOTIFYMASK
                                     PROPERTYCHANGEMASK))
+
+;grab all open windows and manage them
+(for-each manage
+          (x-query-tree-info-children (x-query-tree dpy root)))
 
 (grab-keys)
 
