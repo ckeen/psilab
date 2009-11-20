@@ -11,7 +11,7 @@
 ;; 	(psilab xlib util x-query-tree)
 ;; 	(psilab xlib util x-fetch-name))
 (import foreign)
-(use xlib lookup-table srfi-1 srfi-9 srfi-4 lolevel)
+(use xlib lookup-table srfi-1 srfi-9 srfi-4 lolevel posix)
 
 ;; intermediate glue
 
@@ -33,13 +33,12 @@
                 (xgetgeometry dpy id (location root) (location x) (location y) (location width) (location height) (location border-width) (location depth))
                 (make-x-get-geometry-info root x y width height border-width depth)))
 
-(define x-fetch-name
+(define (x-fetch-name dpy id)
   (let-location ((window-name c-string*))
-    (lambda (dpy id)
-      (if (= (xfetchname dpy id window-name) 0)
-	  #f
-	  (let ((name window-name))
-	    name)))))
+                (if (= (xfetchname dpy id (location window-name)) 0)
+                    #f
+                    (let ((window-name window-name))
+                      window-name))))
 
 
 (define-record x-query-tree-info root parent children)
@@ -344,29 +343,31 @@
 (define desktops-hidden (make-vector 10 '()))
 
 (define (hide-mouse)
-  (when selected (xunmapwindow dpy selected))
-  (vector-set! desktops-hidden
-	       current-desktop
-	       (cons selected (vector-ref desktops-hidden current-desktop)))
-  (set! selected #f)
+  (printf "selected ~A~%" selected)
+  (unless (not selected)
+    (let ((selection selected)
+          (already-hidden (vector-ref desktops-hidden current-desktop)))
+      (xunmapwindow dpy selection)
+      (vector-set! desktops-hidden
+                   current-desktop
+                   (cons selection already-hidden)))
+       (set! selected #f))
   (update-dzen))
 
 (define (unhide id)
-
   (vector-set! desktops-hidden
 	       current-desktop
 	       (remove id (vector-ref desktops-hidden current-desktop)))
-
   (XMapWindow dpy id)
   (update-dzen))
 
 (define (hidden-window-names)
   (with-output-to-string
    (lambda ()
-     (print " ")
+     (printf " ")
      (for-each
       (lambda (name)
-	(print  name " "))
+	(printf "~A "  name))
       (filter
        (lambda (name) name)
        (map
@@ -419,7 +420,6 @@
 	    (define client-x #f)
 	    (define client-y #f)
 	    (let ((info (x-get-geometry dpy client)))
-	      (printf "huhu~%~!")
 	      (set! client-x (x-get-geometry-info-x info))
 	      (set! client-y (x-get-geometry-info-y info)))
 	    (let loop ()
@@ -485,29 +485,29 @@
 
   (set! current-desktop i)
 
-  (if dzen-process-info (update-dzen)))
+  (update-dzen))
 
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define (pager)
   (with-output-to-string
    (lambda ()
-     (print "[")
+     (printf "[ ")
      (let ((n (vector-length desktops)))
        (let loop ((i 0))
 	 (if (>= i n)
-	     (print "]")
+	     (printf " ]")
 	     (begin
 	       (cond ((= i current-desktop)
-		      (print "x"))
+		      (printf "x"))
 		     ((not (null? (vector-ref desktops i)))
-		      (print "-"))
+		      (printf "-"))
 		     ((not (null? (vector-ref desktops-hidden i)))
-		      (print "_"))
+		      (printf "_"))
 		     (else
-		      (print " ")))
+		      (printf " ")))
 	       (if (< i (- n 1))
-		   (print "|"))
+		   (printf " | "))
 	       (loop (+ i 1)))))))))
 
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -516,21 +516,17 @@
 
 ;; [ |_|_| |x| | |-| | | ]
 
-(define dzen-process-info #f)
-
-(define dzen-stdin #f)
-
-(if (= 0 (system "which dzen2"))
-    (let ((info (process "dzen2"
-			 "-bg" other-background-color
-			 "-fg" menu-foreground-color)))
-      (set! dzen-process-info info)
-      (set! dzen-stdin
-	    (transcoded-port (list-ref info 1) (native-transcoder)))))
+(define dzen-stdin
+  (if (= 0 (system "which dzen2"))
+      (let ((p (open-output-pipe (sprintf "dzen2 -bg ~A -fg ~A" other-background-color menu-foreground-color))))
+                     (set-buffering-mode! p #:line)
+                     p)
+      #f))
 
 (define (update-dzen)
-  (printf "~A ~A ~A~%" dzen-stdin (pager) (hidden-window-names)))
-  ;(flush-output-port dzen-stdin))
+  (when dzen-stdin
+    (fprintf dzen-stdin "~A ~A~%~!" (pager) (hidden-window-names))))
+
 
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; dmenu-unmapped
