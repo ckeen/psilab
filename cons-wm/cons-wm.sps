@@ -537,44 +537,29 @@
   (define (not-viewable? c)
     (not (is-viewable? c)))
 
-  (guard (var
-	  (else (printf "  dmenu-unmapped : ~A~%" var)))
-
-    (call-with-process-ports
-
-     (process "dmenu" "-b"
-	      "-nb" menu-background-color
-	      "-sb" selected-menu-background-color
-	      "-nf" menu-foreground-color
-	      "-sf" selected-menu-foreground-color)
-
-     (lambda (in out err)
-
-       (let ((tbl (map
-		   (lambda (id)
-		     (cons id (x-fetch-name dpy id)))
-		   (filter not-viewable?
-			   (vector->list
-			    (dict-keys clients))))))
-
-	 (let ((tbl (filter cdr tbl)))
-
-	   (let ((i 0))
-	     (for-each
-	      (lambda (cell)
-		(printf "~A~A ~A~%" in i  (cdr cell))
-		(set! i (+ i 1)))
-	      tbl))
-
-	   (flush-output-port in)
-
-	   (close-port in)
-
-	   (let ((result (read out)))
-
-	     (if (integer? result)
-
-		 (XMapWindow dpy (car (list-ref tbl result)))))))))))
+  (let* ((tbl (map
+              (lambda (id)
+                (cons id (x-fetch-name dpy id)))
+              (filter not-viewable?
+                       (dict-keys clients))))
+         (ids (filter cdr tbl))
+         (i 0)
+         (windows (with-output-to-string
+                    (lambda () (for-each
+                                (lambda (cell)
+                                  (printf "~A ~A~%" i  (cdr cell))
+                                  (set! i (+ i 1)))
+                                ids)))))
+           (let ((result (with-input-from-pipe
+                             (sprintf "echo ~A | dmenu -b -nb ~A -sb ~A -nf ~A -sf ~A"
+                                      windows
+                                      menu-background-color
+                                      selected-menu-background-color
+                                      menu-foreground-color
+                                      selected-menu-foreground-color)
+                           read)))
+             (when (integer? result)
+                 (xmapwindow dpy (car (list-ref tbl result)))))))
 
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
