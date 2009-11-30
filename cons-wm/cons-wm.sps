@@ -376,13 +376,12 @@
 	(vector-ref desktops-hidden current-desktop)))))))
 
 (define (dmenu-hidden)
-     (call-with-process-ports
-     (process (sprintf "dmenu_run -b -nb '~A' -sb '~A' -nf '~A' -sf '~A' &"
+     (receive (in out id) 
+        (process (sprintf "dmenu_run -b -nb '~A' -sb '~A' -nf '~A' -sf '~A' &"
                       menu-background-color
                       selected-menu-background-color
                       menu-foreground-color
                       selected-menu-foreground-color))
-     (lambda (in out err)
        (let ((tbl (filter cdr
 			  (map
 			   (lambda (id)
@@ -391,15 +390,16 @@
 	 (let ((i 0))
 	   (for-each
 	    (lambda (cell)
-	      (printf "~A~A ~A~%" in i (cdr cell))
+	      (fprintf in "~A ~A~%" i (cdr cell))
 	      (set! i (+ i 1)))
 	    tbl))
 ;	 (flush-output-port in)
-	 (close-port in)
+	 (close-input-port in)
 	 (let ((result (read out)))
+           (close-output-port out)
 	   (if (integer? result)
 	       (unhide (car (list-ref tbl result)))
-	       (update-dzen)))))))
+	       (update-dzen))))))
 
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
