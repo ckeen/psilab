@@ -357,8 +357,10 @@
 (define (unhide id)
   (vector-set! desktops-hidden
 	       current-desktop
-	       (remove id (vector-ref desktops-hidden current-desktop)))
-  (XMapWindow dpy id)
+	       (remove
+		(lambda (i) (eq? i id))
+		(vector-ref desktops-hidden current-desktop)))
+  (xmapwindow dpy id)
   (update-dzen))
 
 (define (hidden-window-names)
@@ -376,30 +378,34 @@
 	(vector-ref desktops-hidden current-desktop)))))))
 
 (define (dmenu-hidden)
-     (receive (in out id) 
-        (process (sprintf "dmenu_run -b -nb '~A' -sb '~A' -nf '~A' -sf '~A' &"
-                      menu-background-color
-                      selected-menu-background-color
-                      menu-foreground-color
-                      selected-menu-foreground-color))
-       (let ((tbl (filter cdr
-			  (map
-			   (lambda (id)
-			     (cons id (x-fetch-name dpy id)))
-			   (vector-ref desktops-hidden current-desktop)))))
+  (let ((tbl (filter cdr
+		     (map
+		      (lambda (id)
+			(cons id (x-fetch-name dpy id)))
+		      (vector-ref desktops-hidden current-desktop)))))
+    (unless (null? tbl)
+	    (receive (in out id) 
+	     (process (sprintf "dmenu -b -nb '~A' -sb '~A' -nf '~A' -sf '~A' "
+			       menu-background-color
+			       selected-menu-background-color
+			       menu-foreground-color
+			       selected-menu-foreground-color))
 	 (let ((i 0))
 	   (for-each
 	    (lambda (cell)
-	      (fprintf in "~A ~A~%" i (cdr cell))
+	      (fprintf out "~A ~A~%" i (cdr cell))
+	      (printf "~A ~A~!" i (cdr cell))
 	      (set! i (+ i 1)))
 	    tbl))
+	 (fprintf out "~!")
 ;	 (flush-output-port in)
-	 (close-input-port in)
-	 (let ((result (read out)))
-           (close-output-port out)
+	 (close-output-port out)
+	 (let ((result (read in)))
+	   (printf "Got table ~A and result ~A~%" tbl result)
+           (close-input-port in)
 	   (if (integer? result)
 	       (unhide (car (list-ref tbl result)))
-	       (update-dzen))))))
+	       (update-dzen)))))))
 
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
